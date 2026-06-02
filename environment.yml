@@ -1,0 +1,25 @@
+name: falaises-lidar
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - geopandas
+  - rasterio
+  - rasterstats
+  - gdal
+  - fiona
+  - shapely
+  - pyproj
+  - pyogrio
+  - rtree
+  - pandas
+  - numpy
+  - matplotlib
+  - folium
+  - contextily
+  - jupyterlab
+  - ipykernel
+  - tqdm
+  - pytest
+  - ruff
+  - black
