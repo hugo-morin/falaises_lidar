@@ -30,6 +30,8 @@ except ImportError:  # pragma: no cover - depends on local GDAL packaging
 
 from .config import PipelineConfig, Target
 
+gdal.UseExceptions()
+
 
 TILE_SUFFIXES = {
     "202": "NE",
@@ -63,7 +65,10 @@ def run_pipeline(config: PipelineConfig, target: Target) -> Path | None:
 
     merged = merge_outputs(config, target, selected_area, output_dir)
     elapsed = dt.datetime.now() - start
-    print(f"Cliffs identified for {target.name} in {elapsed}")
+    if merged is None:
+        print(f"No cliffs identified for {target.name} in {elapsed}")
+    else:
+        print(f"Cliffs identified for {target.name} in {elapsed}")
     return merged
 
 
