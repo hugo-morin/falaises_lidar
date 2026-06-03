@@ -31,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Administrative regions shapefile or zip archive.",
     )
     parser.add_argument(
+        "--lidar-urls",
+        type=Path,
+        default=Path("associated_data/URL_Lidar.csv"),
+        help="CSV listing official LiDAR URLs by tile. Missing files fall back to the URL template.",
+    )
+    parser.add_argument(
         "--geology",
         type=Path,
         default=Path("associated_data/Zone geologique.shp"),
@@ -44,8 +50,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--min-slope", type=float, default=70.0)
     parser.add_argument("--min-surface", type=float, default=100.0)
-    parser.add_argument("--min-height", type=float, default=20.0)
+    parser.add_argument("--min-height", type=float, default=15.0)
+    parser.add_argument(
+        "--score-slope-weight",
+        type=float,
+        default=0.7,
+        help="Priority score weight given to mean slope, from 0 to 1.",
+    )
+    parser.add_argument(
+        "--score-height-cap",
+        type=float,
+        default=50.0,
+        help="Height in metres where the height part of the priority score reaches its maximum.",
+    )
     parser.add_argument("--quarry-distance", type=float, default=1000.0)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List selected tiles for the target without downloading or processing rasters.",
+    )
     parser.add_argument(
         "--keep-mnt",
         action="store_true",
@@ -76,11 +99,14 @@ def main(argv: list[str] | None = None) -> int:
         workspace=args.workspace,
         index_path=args.index,
         region_path=args.regions,
+        lidar_urls_path=args.lidar_urls,
         geology_path=args.geology,
         quarry_path=args.quarries,
         min_slope=args.min_slope,
         min_surface=args.min_surface,
         min_height=args.min_height,
+        score_slope_weight=args.score_slope_weight,
+        score_height_cap=args.score_height_cap,
         quarry_distance=args.quarry_distance,
         delete_mnt=not args.keep_mnt,
     )
@@ -90,7 +116,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         target = Target.for_shapes(args.shapes)
 
-    from .processing import run_pipeline
+    from .processing import describe_target, run_pipeline
+
+    if args.dry_run:
+        describe_target(config, target)
+        return 0
 
     output = run_pipeline(config, target)
     if output is not None:

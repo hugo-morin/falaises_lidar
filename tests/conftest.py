@@ -1,0 +1,16 @@
+import sys
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+@pytest.fixture
+def workspace_tmp(request) -> Path:
+    path = ROOT / "output" / "test_tmp" / request.node.name
+    path.mkdir(parents=True, exist_ok=True)
+    return path

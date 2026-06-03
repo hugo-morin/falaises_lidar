@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import zipfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
@@ -37,6 +38,8 @@ TILE_SUFFIXES = {
     "101": "SO",
 }
 
+_LIDAR_URL_CACHE: dict[Path, dict[str, str]] = {}
+
 
 def run_pipeline(config: PipelineConfig, target: Target) -> Path | None:
     """Run the full pipeline for one target and return the merged output path."""
@@ -57,6 +60,27 @@ def run_pipeline(config: PipelineConfig, target: Target) -> Path | None:
     elapsed = dt.datetime.now() - start
     print(f"Cliffs identified for {target.name} in {elapsed}")
     return merged
+
+
+def describe_target(config: PipelineConfig, target: Target) -> None:
+    """Print selected tiles and URL coverage without running raster processing."""
+
+    selected_area, tile_codes = select_tiles(config, target)
+    print(f"Target {target.name}: {len(selected_area)} area feature(s), {len(tile_codes)} tile(s)")
+
+    if target.mode == "region" and "RES_CO_REG" in selected_area.columns:
+        regions = selected_area[["RES_CO_REG", "RES_NM_REG"]].drop_duplicates()
+        for row in regions.itertuples(index=False):
+            print(f"Region {row.RES_CO_REG}: {row.RES_NM_REG}")
+
+    urls = load_lidar_urls(config.lidar_urls_path)
+    if urls:
+        covered = sum(1 for tile_code in tile_codes if tile_code in urls)
+        print(f"LiDAR URL coverage: {covered}/{len(tile_codes)} tile(s)")
+
+    for tile_code in tile_codes:
+        suffix = "" if not urls else (" ok" if tile_code in urls else " missing-url")
+        print(f"{tile_code}{suffix}")
 
 
 def select_tiles(config: PipelineConfig, target: Target) -> tuple[gpd.GeoDataFrame, list[str]]:
@@ -88,7 +112,7 @@ def select_tiles(config: PipelineConfig, target: Target) -> tuple[gpd.GeoDataFra
 def normalize_tile_name(value: object) -> str:
     """Convert index tile names to the naming convention used by MNT files."""
 
-    raw = str(value)
+    raw = str(value).strip().upper()
     suffix = raw[-3:]
     if suffix not in TILE_SUFFIXES:
         raise ValueError(f"Unexpected tile suffix {suffix!r} in {raw!r}")
@@ -130,6 +154,8 @@ def process_tile(config: PipelineConfig, tile_name: str, output_dir: Path, remai
 
         cliffs = add_orientation(cliffs, aspect_path)
         cliffs = add_average_slope(cliffs, slopes_path)
+        cliffs = add_priority_score(cliffs, config)
+        cliffs["tuile"] = tile_name
         cliffs.to_file(shp_path, driver="ESRI Shapefile")
         cliffs.to_file(kml_path, driver="KML")
 
@@ -146,13 +172,50 @@ def process_tile(config: PipelineConfig, tile_name: str, output_dir: Path, remai
 def download_mnt(config: PipelineConfig, tile_name: str, destination: Path) -> None:
     """Download a DEM tile using the configured source URL."""
 
-    url = config.lidar_url_template.format(prefix=tile_name[:3], tile=tile_name)
+    url = mnt_url_for_tile(config, tile_name)
     print(f"Downloading MNT_{tile_name}.tif")
     try:
         urlretrieve(url, destination)
     except Exception as exc:  # noqa: BLE001 - keep download failures contextual
         remove_if_exists(destination)
         raise RuntimeError(f"DEM is not available for tile {tile_name}: {url}") from exc
+
+
+def mnt_url_for_tile(config: PipelineConfig, tile_name: str) -> str:
+    """Return the best known DEM URL for one normalized tile."""
+
+    tile_name = tile_name.upper()
+    urls = load_lidar_urls(config.lidar_urls_path)
+    if tile_name in urls:
+        return urls[tile_name]
+    return config.lidar_url_template.format(prefix=tile_name[:3], tile=tile_name)
+
+
+def load_lidar_urls(path: Path | None) -> dict[str, str]:
+    """Load official DEM URLs keyed by normalized tile name."""
+
+    if path is None:
+        return {}
+    path = Path(path)
+    if not path.exists():
+        return {}
+    resolved = path.resolve()
+    if resolved in _LIDAR_URL_CACHE:
+        return _LIDAR_URL_CACHE[resolved]
+
+    table = pd.read_csv(resolved, encoding="utf-8-sig")
+    required = {"Feuillet20K", "MNT"}
+    if not required.issubset(table.columns):
+        missing = ", ".join(sorted(required - set(table.columns)))
+        raise ValueError(f"Missing LiDAR URL column(s): {missing}")
+
+    urls = {
+        str(row.Feuillet20K).strip().upper(): str(row.MNT).strip()
+        for row in table.itertuples(index=False)
+        if pd.notna(row.Feuillet20K) and pd.notna(row.MNT)
+    }
+    _LIDAR_URL_CACHE[resolved] = urls
+    return urls
 
 
 def extract_candidate_cliffs(
@@ -221,10 +284,32 @@ def add_average_slope(gdf: gpd.GeoDataFrame, slopes_path: Path) -> gpd.GeoDataFr
     """Add mean slope for each cliff polygon."""
 
     gdf = gdf.copy()
-    gdf["pente_moyenne"] = [
+    gdf["pente_moy"] = [
         zonal_mean(geometry, slopes_path)
         for geometry in gdf.geometry
     ]
+    return gdf
+
+
+def add_priority_score(gdf: gpd.GeoDataFrame, config: PipelineConfig) -> gpd.GeoDataFrame:
+    """Rank candidates with slope weighted ahead of raw height."""
+
+    gdf = gdf.copy()
+    slopes = pd.to_numeric(gdf["pente_moy"], errors="coerce").fillna(config.min_slope)
+    heights = pd.to_numeric(gdf["hauteur"], errors="coerce").fillna(0)
+
+    slope_span = max(90.0 - config.min_slope, 1.0)
+    slope_part = ((slopes - config.min_slope) / slope_span).clip(0, 1)
+    height_part = (heights / config.score_height_cap).clip(0, 1)
+    slope_weight = config.score_slope_weight
+
+    score = (slope_weight * slope_part + (1 - slope_weight) * height_part) * 100
+    gdf["score"] = score.round(1)
+    gdf["priorite"] = np.select(
+        [gdf["score"] >= 75, gdf["score"] >= 50],
+        ["A", "B"],
+        default="C",
+    )
     return gdf
 
 
@@ -292,9 +377,11 @@ def merge_outputs(
 
     output_path = output_dir / f"falaises_region_{target.name}.shp"
     kml_path = output_dir / f"falaises_region_{target.name}.kml"
+    gpkg_path = output_dir / f"falaises_region_{target.name}.gpkg"
     print("Saving merged outputs")
     merged.to_file(output_path, driver="ESRI Shapefile")
     merged.to_file(kml_path, driver="KML")
+    merged.to_file(gpkg_path, layer="falaises", driver="GPKG")
     return output_path
 
 
@@ -334,7 +421,7 @@ def read_vector(path: Path) -> gpd.GeoDataFrame:
     """Read a vector layer from a shapefile or zip archive."""
 
     if path.suffix.lower() == ".zip":
-        return gpd.read_file(f"zip://{path.resolve().as_posix()}")
+        return gpd.read_file(vector_zip_uri(path))
     if path.exists():
         return gpd.read_file(path)
 
@@ -343,6 +430,17 @@ def read_vector(path: Path) -> gpd.GeoDataFrame:
         return gpd.read_file(f"zip://{sibling_zip.resolve().as_posix()}!{path.name}")
 
     raise FileNotFoundError(path)
+
+
+def vector_zip_uri(path: Path) -> str:
+    """Return a GDAL-readable URI for zipped shapefiles and zipped GeoPackages."""
+
+    resolved = path.resolve().as_posix()
+    with zipfile.ZipFile(path) as archive:
+        gpkg_names = [name for name in archive.namelist() if name.lower().endswith(".gpkg")]
+    if len(gpkg_names) == 1:
+        return f"/vsizip/{resolved}/{gpkg_names[0]}"
+    return f"zip://{resolved}"
 
 
 def remove_if_exists(path: Path) -> None:

@@ -12,11 +12,14 @@ class PipelineConfig:
     workspace: Path
     index_path: Path
     region_path: Path | None = None
+    lidar_urls_path: Path | None = None
     geology_path: Path | None = None
     quarry_path: Path | None = None
     min_slope: float = 70.0
     min_surface: float = 100.0
-    min_height: float = 20.0
+    min_height: float = 15.0
+    score_slope_weight: float = 0.7
+    score_height_cap: float = 50.0
     quarry_distance: float = 1000.0
     delete_mnt: bool = True
     lidar_url_template: str = (
@@ -31,6 +34,10 @@ class PipelineConfig:
             raise ValueError("min_surface must be positive")
         if self.min_height < 0:
             raise ValueError("min_height must be positive")
+        if self.score_slope_weight < 0 or self.score_slope_weight > 1:
+            raise ValueError("score_slope_weight must be between 0 and 1")
+        if self.score_height_cap <= 0:
+            raise ValueError("score_height_cap must be positive")
         if self.quarry_distance < 0:
             raise ValueError("quarry_distance must be positive")
 
