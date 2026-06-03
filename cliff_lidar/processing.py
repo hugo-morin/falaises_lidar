@@ -187,8 +187,8 @@ def process_tile(config: PipelineConfig, tile_name: str, output_dir: Path, remai
         cliffs = add_average_slope(cliffs, slopes_path)
         cliffs = add_priority_score(cliffs, config)
         cliffs["tuile"] = tile_name
-        cliffs.to_file(shp_path, driver="ESRI Shapefile")
-        cliffs.to_file(kml_path, driver="KML")
+        write_vector(cliffs, shp_path, driver="ESRI Shapefile")
+        write_vector(cliffs, kml_path, driver="KML")
 
         elapsed = dt.datetime.now() - start
         print(f"Tile {tile_name} processed in {elapsed}, {remaining} tiles remaining")
@@ -446,12 +446,12 @@ def merge_outputs(
 
     output_path = output_dir / f"falaises_region_{target.name}.shp"
     kml_path = output_dir / f"falaises_region_{target.name}.kml"
-    gpkg_path = output_dir / f"falaises_region_{target.name}.gpkg"
+    fgb_path = output_dir / f"falaises_region_{target.name}.fgb"
     print("Saving merged outputs")
-    merged.to_file(output_path, driver="ESRI Shapefile")
-    merged.to_file(kml_path, driver="KML")
-    merged.to_file(gpkg_path, layer="falaises", driver="GPKG")
-    return output_path
+    fgb_path = write_required_vector(merged, fgb_path, driver="FlatGeobuf")
+    write_optional_vector(merged, output_path, driver="ESRI Shapefile")
+    write_optional_vector(merged, kml_path, driver="KML")
+    return fgb_path
 
 
 def remove_quarry_buffers(
@@ -490,15 +490,86 @@ def read_vector(path: Path) -> gpd.GeoDataFrame:
     """Read a vector layer from a shapefile or zip archive."""
 
     if path.suffix.lower() == ".zip":
-        return gpd.read_file(vector_zip_uri(path))
+        return read_vector_uri(vector_zip_uri(path))
     if path.exists():
-        return gpd.read_file(path)
+        return read_vector_uri(path)
 
     sibling_zip = path.with_suffix(".zip")
     if sibling_zip.exists():
-        return gpd.read_file(f"zip://{sibling_zip.resolve().as_posix()}!{path.name}")
+        return read_vector_uri(f"zip://{sibling_zip.resolve().as_posix()}!{path.name}")
 
     raise FileNotFoundError(path)
+
+
+def read_vector_uri(path_or_uri: str | Path) -> gpd.GeoDataFrame:
+    """Read a vector layer, falling back for legacy shapefile encodings."""
+
+    attempts = (
+        {},
+        {"engine": "fiona"},
+        {"encoding": "ISO-8859-1"},
+        {"engine": "fiona", "encoding": "ISO-8859-1"},
+        {"engine": "fiona", "encoding": "Windows-1252"},
+    )
+    errors = []
+    for kwargs in attempts:
+        try:
+            return gpd.read_file(path_or_uri, **kwargs)
+        except UnicodeDecodeError as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[-1]
+    raise RuntimeError(f"Unable to read vector layer: {path_or_uri}")
+
+
+def write_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> None:
+    """Write a vector layer with driver-specific compatibility settings."""
+
+    driver = kwargs.get("driver")
+    remove_vector_output(path, driver)
+    if driver in {"GPKG", "KML"}:
+        kwargs.setdefault("engine", "fiona")
+    gdf.to_file(path, **kwargs)
+
+
+def write_optional_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> None:
+    """Write secondary outputs without failing the whole pipeline if locked."""
+
+    try:
+        write_vector(gdf, path, **kwargs)
+    except PermissionError as exc:
+        print(f"Could not overwrite {path}: {exc}")
+        print("Skipping this secondary output; close GIS/file sync handles and rerun if needed.")
+
+
+def write_required_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> Path:
+    """Write a required output, falling back to a timestamped path if locked."""
+
+    try:
+        write_vector(gdf, path, **kwargs)
+        return path
+    except PermissionError as exc:
+        fallback_path = timestamped_output_path(path)
+        print(f"Could not overwrite {path}: {exc}")
+        print(f"Writing required output to {fallback_path} instead.")
+        write_vector(gdf, fallback_path, **kwargs)
+        return fallback_path
+
+
+def remove_vector_output(path: Path, driver: str | None) -> None:
+    """Remove generated vector outputs before overwriting them."""
+
+    if driver == "ESRI Shapefile":
+        for suffix in (".shp", ".shx", ".dbf", ".prj", ".cpg", ".qpj", ".qix"):
+            remove_if_exists(path.with_suffix(suffix))
+    else:
+        remove_if_exists(path)
+        remove_if_exists(path.with_name(f"{path.name}-journal"))
+
+
+def timestamped_output_path(path: Path) -> Path:
+    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
 
 
 def vector_zip_uri(path: Path) -> str:

@@ -17,7 +17,9 @@ pour l'escalade.
 7. Fusionne les resultats, coupe sur la zone demandee, retire les carrieres et
    joint les attributs geologiques si la couche est fournie.
 
-Les resultats sont des shapefiles, KML et GeoPackage dans `output/<cible>/`.
+Les resultats fusionnes sont exportes en FlatGeobuf (`.fgb`), avec shapefile et
+KML en sorties secondaires quand le systeme de fichiers les laisse etre
+remplaces.
 
 ## Installation
 

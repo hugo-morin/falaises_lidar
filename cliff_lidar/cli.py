@@ -138,5 +138,5 @@ def main(argv: list[str] | None = None) -> int:
 
     output = run_pipeline(config, target)
     if output is not None:
-        print(f"Merged shapefile: {output}")
+        print(f"Merged output: {output}")
     return 0
