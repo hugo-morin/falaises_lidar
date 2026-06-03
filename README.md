@@ -17,8 +17,9 @@ pour l'escalade.
 7. Fusionne les resultats, coupe sur la zone demandee, retire les carrieres et
    joint les attributs geologiques si la couche est fournie.
 
-Les resultats fusionnes sont exportes en FlatGeobuf (`.fgb`), avec shapefile et
-KML en sorties secondaires quand le systeme de fichiers les laisse etre
+Les resultats fusionnes sont exportes en FlatGeobuf (`.fgb`) pour QGIS et en
+GeoJSON (`.geojson`) pour le partage. Le shapefile et le KML sont aussi produits
+comme sorties secondaires quand le systeme de fichiers les laisse etre
 remplaces.
 
 ## Installation

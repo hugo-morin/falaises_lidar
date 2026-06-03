@@ -425,7 +425,7 @@ def merge_outputs(
 
     tile_paths = sorted(
         path for path in output_dir.glob("falaises_region_*.shp")
-        if path.stem != f"falaises_region_{target.name}"
+        if not path.stem.startswith(f"falaises_region_{target.name}")
     )
     if not tile_paths:
         print("No per-tile cliff outputs to merge")
@@ -447,8 +447,10 @@ def merge_outputs(
     output_path = output_dir / f"falaises_region_{target.name}.shp"
     kml_path = output_dir / f"falaises_region_{target.name}.kml"
     fgb_path = output_dir / f"falaises_region_{target.name}.fgb"
+    geojson_path = output_dir / f"falaises_region_{target.name}.geojson"
     print("Saving merged outputs")
     fgb_path = write_required_vector(merged, fgb_path, driver="FlatGeobuf")
+    write_required_vector(merged, geojson_path, driver="GeoJSON")
     write_optional_vector(merged, output_path, driver="ESRI Shapefile")
     write_optional_vector(merged, kml_path, driver="KML")
     return fgb_path
@@ -529,7 +531,16 @@ def write_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> None:
     remove_vector_output(path, driver)
     if driver in {"GPKG", "KML"}:
         kwargs.setdefault("engine", "fiona")
-    gdf.to_file(path, **kwargs)
+    output = prepare_vector_for_driver(gdf, driver)
+    output.to_file(path, **kwargs)
+
+
+def prepare_vector_for_driver(gdf: gpd.GeoDataFrame, driver: str | None) -> gpd.GeoDataFrame:
+    """Adapt CRS for formats commonly consumed by GPS and web mapping tools."""
+
+    if driver in {"GeoJSON", "KML"} and gdf.crs is not None:
+        return gdf.to_crs("EPSG:4326")
+    return gdf
 
 
 def write_optional_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> None:
@@ -538,8 +549,10 @@ def write_optional_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> None:
     try:
         write_vector(gdf, path, **kwargs)
     except PermissionError as exc:
+        fallback_path = timestamped_output_path(path)
         print(f"Could not overwrite {path}: {exc}")
-        print("Skipping this secondary output; close GIS/file sync handles and rerun if needed.")
+        print(f"Writing secondary output to {fallback_path} instead.")
+        write_vector(gdf, fallback_path, **kwargs)
 
 
 def write_required_vector(gdf: gpd.GeoDataFrame, path: Path, **kwargs) -> Path:
