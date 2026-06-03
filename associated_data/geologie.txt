@@ -1,3 +1,0 @@
-https://www.donneesquebec.ca/recherche/fr/dataset/geologie-du-socle
-
-Utiliser le shapfile Zone geologique.shp
