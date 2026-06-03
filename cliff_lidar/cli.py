@@ -70,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="List selected tiles for the target without downloading or processing rasters.",
     )
     parser.add_argument(
+        "--max-tiles",
+        type=int,
+        help="Process only the first N selected tiles, useful for smoke tests.",
+    )
+    parser.add_argument(
         "--keep-mnt",
         action="store_true",
         help="Keep downloaded DEM files after each tile is processed.",
@@ -81,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="region_codes",
         help="Administrative region code to process. Can be passed more than once.",
+    )
+    target.add_argument(
+        "--tile",
+        action="append",
+        dest="tiles",
+        help="Normalized LiDAR tile code to process, for example 31J01SE. Can be passed more than once.",
     )
     target.add_argument(
         "--shape",
@@ -108,11 +119,14 @@ def main(argv: list[str] | None = None) -> int:
         score_slope_weight=args.score_slope_weight,
         score_height_cap=args.score_height_cap,
         quarry_distance=args.quarry_distance,
+        max_tiles=args.max_tiles,
         delete_mnt=not args.keep_mnt,
     )
 
     if args.region_codes:
         target = Target.for_regions(args.region_codes)
+    elif args.tiles:
+        target = Target.for_tiles(args.tiles)
     else:
         target = Target.for_shapes(args.shapes)
 

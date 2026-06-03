@@ -46,10 +46,15 @@ def run_pipeline(config: PipelineConfig, target: Target) -> Path | None:
 
     start = dt.datetime.now()
     selected_area, tile_codes = select_tiles(config, target)
+    total_tiles = len(tile_codes)
+    tile_codes = limit_tiles(config, tile_codes)
     output_dir = config.workspace / target.name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Processing target {target.name} with {len(tile_codes)} tiles")
+    if len(tile_codes) != total_tiles:
+        print(f"Processing target {target.name} with {len(tile_codes)}/{total_tiles} tiles")
+    else:
+        print(f"Processing target {target.name} with {len(tile_codes)} tiles")
     processed = 0
     for tile_code in tile_codes:
         processed += 1
@@ -65,8 +70,11 @@ def run_pipeline(config: PipelineConfig, target: Target) -> Path | None:
 def describe_target(config: PipelineConfig, target: Target) -> None:
     """Print selected tiles and URL coverage without running raster processing."""
 
-    selected_area, tile_codes = select_tiles(config, target)
-    print(f"Target {target.name}: {len(selected_area)} area feature(s), {len(tile_codes)} tile(s)")
+    selected_area, all_tile_codes = select_tiles(config, target)
+    tile_codes = limit_tiles(config, all_tile_codes)
+    print(f"Target {target.name}: {len(selected_area)} area feature(s), {len(all_tile_codes)} tile(s)")
+    if len(tile_codes) != len(all_tile_codes):
+        print(f"Limited to first {len(tile_codes)} tile(s) by --max-tiles")
 
     if target.mode == "region" and "RES_CO_REG" in selected_area.columns:
         regions = selected_area[["RES_CO_REG", "RES_NM_REG"]].drop_duplicates()
@@ -93,6 +101,13 @@ def select_tiles(config: PipelineConfig, target: Target) -> tuple[gpd.GeoDataFra
             raise ValueError("region_path is required when processing administrative regions")
         area = read_vector(config.region_path)
         area = area[area["RES_CO_REG"].astype(str).isin(target.region_codes)]
+    elif target.mode == "tile":
+        index = index.copy()
+        index["tile_code"] = index["No_tuile2"].apply(normalize_tile_name)
+        area = index[index["tile_code"].isin(target.tile_codes)]
+        missing = sorted(set(target.tile_codes) - set(area["tile_code"]))
+        if missing:
+            raise ValueError(f"Tile code(s) not found in index: {', '.join(missing)}")
     elif target.mode == "shape":
         frames = [read_vector(path) for path in target.shape_paths]
         area = pd.concat(frames, ignore_index=True)
@@ -104,9 +119,20 @@ def select_tiles(config: PipelineConfig, target: Target) -> tuple[gpd.GeoDataFra
         raise ValueError(f"No geometry found for target {target.name}")
 
     area = area.to_crs(index.crs)
-    tiles = gpd.overlay(index, area, how="intersection")
-    tile_names = [normalize_tile_name(value) for value in tiles["No_tuile2"].dropna()]
+    if target.mode == "tile":
+        tile_names = list(area["tile_code"])
+    else:
+        tiles = gpd.overlay(index, area, how="intersection")
+        tile_names = [normalize_tile_name(value) for value in tiles["No_tuile2"].dropna()]
     return area, sorted(set(tile_names))
+
+
+def limit_tiles(config: PipelineConfig, tile_codes: list[str]) -> list[str]:
+    """Apply an optional tile limit while preserving deterministic order."""
+
+    if config.max_tiles is None:
+        return tile_codes
+    return tile_codes[: config.max_tiles]
 
 
 def normalize_tile_name(value: object) -> str:

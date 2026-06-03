@@ -21,6 +21,7 @@ class PipelineConfig:
     score_slope_weight: float = 0.7
     score_height_cap: float = 50.0
     quarry_distance: float = 1000.0
+    max_tiles: int | None = None
     delete_mnt: bool = True
     lidar_url_template: str = (
         "ftp://transfert.mffp.gouv.qc.ca/Public/Diffusion/DonneeGratuite/"
@@ -40,6 +41,8 @@ class PipelineConfig:
             raise ValueError("score_height_cap must be positive")
         if self.quarry_distance < 0:
             raise ValueError("quarry_distance must be positive")
+        if self.max_tiles is not None and self.max_tiles <= 0:
+            raise ValueError("max_tiles must be positive")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class Target:
     name: str
     mode: str
     region_codes: tuple[str, ...] = field(default_factory=tuple)
+    tile_codes: tuple[str, ...] = field(default_factory=tuple)
     shape_paths: tuple[Path, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -57,6 +61,13 @@ class Target:
         if not codes:
             raise ValueError("At least one administrative region code is required")
         return cls(name="_".join(codes), mode="region", region_codes=codes)
+
+    @classmethod
+    def for_tiles(cls, tile_codes: Iterable[str]) -> "Target":
+        codes = tuple(str(code).strip().upper() for code in tile_codes)
+        if not codes:
+            raise ValueError("At least one tile code is required")
+        return cls(name="tiles_" + "_".join(codes), mode="tile", tile_codes=codes)
 
     @classmethod
     def for_shapes(cls, shape_paths: Iterable[Path]) -> "Target":

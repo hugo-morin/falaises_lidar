@@ -83,6 +83,12 @@ Traiter plusieurs regions:
 python Main.py --region-code 12 --region-code 15
 ```
 
+Traiter une tuile LiDAR precise:
+
+```powershell
+python Main.py --tile 31J01SE
+```
+
 Traiter une zone custom:
 
 ```powershell
@@ -99,6 +105,12 @@ Lister les tuiles d'une cible sans telecharger ni traiter de rasters:
 
 ```powershell
 python Main.py --region-code 12 --dry-run
+```
+
+Tester seulement les premieres tuiles d'une region avant un traitement complet:
+
+```powershell
+python Main.py --region-code 14 --max-tiles 2
 ```
 
 Afficher toutes les options:
@@ -126,6 +138,8 @@ python Main.py --help
 - `--quarry-distance`: buffer d'exclusion autour des carrieres, par defaut
   `1000`.
 - `--dry-run`: liste les tuiles selectionnees et la couverture du CSV d'URLs.
+- `--max-tiles`: limite le traitement aux N premieres tuiles selectionnees,
+  utile pour un test de fumee.
 - `--keep-mnt`: conserve les MNT apres traitement.
 
 ## Structure du code

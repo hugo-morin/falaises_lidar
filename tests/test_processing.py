@@ -3,8 +3,8 @@ from pathlib import Path
 import geopandas as gpd
 from shapely.geometry import box
 
-from cliff_lidar.config import PipelineConfig
-from cliff_lidar.processing import add_priority_score, mnt_url_for_tile, normalize_tile_name
+from cliff_lidar.config import PipelineConfig, Target
+from cliff_lidar.processing import add_priority_score, limit_tiles, mnt_url_for_tile, normalize_tile_name
 
 
 def make_config(tmp_path: Path, **overrides) -> PipelineConfig:
@@ -40,6 +40,20 @@ def test_mnt_url_falls_back_to_template(workspace_tmp: Path) -> None:
     config = make_config(workspace_tmp)
 
     assert mnt_url_for_tile(config, "21E13NE").endswith("/21E/21E13NE/MNT_21E13NE.tif")
+
+
+def test_target_for_tiles_normalizes_codes() -> None:
+    target = Target.for_tiles(["31j01se"])
+
+    assert target.name == "tiles_31J01SE"
+    assert target.mode == "tile"
+    assert target.tile_codes == ("31J01SE",)
+
+
+def test_limit_tiles_keeps_first_selected_tiles(workspace_tmp: Path) -> None:
+    config = make_config(workspace_tmp, max_tiles=2)
+
+    assert limit_tiles(config, ["A", "B", "C"]) == ["A", "B"]
 
 
 def test_priority_score_weights_slope_ahead_of_height(workspace_tmp: Path) -> None:
