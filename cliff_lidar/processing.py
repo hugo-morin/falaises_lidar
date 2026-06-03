@@ -201,10 +201,48 @@ def download_mnt(config: PipelineConfig, tile_name: str, destination: Path) -> N
     url = mnt_url_for_tile(config, tile_name)
     print(f"Downloading MNT_{tile_name}.tif")
     try:
-        urlretrieve(url, destination)
+        urlretrieve(url, destination, reporthook=download_progress_hook(tile_name))
+        print()
     except Exception as exc:  # noqa: BLE001 - keep download failures contextual
+        print()
         remove_if_exists(destination)
         raise RuntimeError(f"DEM is not available for tile {tile_name}: {url}") from exc
+
+
+def download_progress_hook(tile_name: str):
+    """Return a urlretrieve progress hook that prints compact download progress."""
+
+    state = {"last_percent": -1, "last_mebibytes": -1}
+
+    def report(block_count: int, block_size: int, total_size: int) -> None:
+        downloaded = block_count * block_size
+        if total_size > 0:
+            percent = min(100, int(downloaded * 100 / total_size))
+            if percent < state["last_percent"] + 5 and percent != 100:
+                return
+            state["last_percent"] = percent
+            message = (
+                f"\rMNT_{tile_name}.tif: {percent:3d}% "
+                f"({format_byte_count(downloaded)} / {format_byte_count(total_size)})"
+            )
+        else:
+            mebibytes = downloaded // (1024 * 1024)
+            if mebibytes < state["last_mebibytes"] + 10:
+                return
+            state["last_mebibytes"] = mebibytes
+            message = f"\rMNT_{tile_name}.tif: {format_byte_count(downloaded)} downloaded"
+        print(message, end="", flush=True)
+
+    return report
+
+
+def format_byte_count(value: int) -> str:
+    """Format byte counts for human-readable progress logs."""
+
+    mebibytes = value / (1024 * 1024)
+    if mebibytes < 1024:
+        return f"{mebibytes:.1f} MB"
+    return f"{mebibytes / 1024:.2f} GB"
 
 
 def mnt_url_for_tile(config: PipelineConfig, tile_name: str) -> str:
